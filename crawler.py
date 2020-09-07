@@ -16,16 +16,18 @@ from dbIO import readDB, insertDB
 
 import nltk
 from nltk.corpus import stopwords
+from konlpy.tag import Okt
 from ckonlpy.tag import Twitter, Postprocessor
 from ckonlpy.utils import load_wordset, load_ngram
 
-twitter = Twitter()
-stopwordsKR = load_wordset('cleansing_data/korean_stopwords.txt', encoding='ANSI')
+okt = Okt()
+# twitter = Twitter()
+# stopwordsKR = load_wordset('cleansing_data/korean_stopwords.txt', encoding='ANSI')
 customStopwordsEN = load_wordset('cleansing_data/english_stopwords.txt', encoding='ANSI')
 stopwordsEN = customStopwordsEN.union(set(stopwords.words('english')))
-ngrams = load_ngram('cleansing_data/korean_ngram.txt')
-userdicts = load_wordset('cleansing_data/korean_user_dict.txt')
-twitter.add_dictionary(list(userdicts), 'Noun', force=True)
+# ngrams = load_ngram('cleansing_data/korean_ngram.txt')
+# userdicts = load_wordset('cleansing_data/korean_user_dict.txt')
+# twitter.add_dictionary(list(userdicts), 'Noun', force=True)
 
 
 def connectWebDriver(web):
@@ -116,14 +118,17 @@ def scrapCourses(coursesPages):
 
 
 def tokenize(text):
+    # print(text)
     englishTokens = nltk.word_tokenize(re.sub(f'[^a-zA-Z]', ' ', text).strip())
-    # english = [token for token in englishTokens if token not in stopwordsEN]
-    postprocessor = Postprocessor(twitter, passtags='Noun', ngrams=ngrams, stopwords=stopwordsKR)
-    koreanWords = postprocessor.pos(text)
-    korean = [word[0] for word in koreanWords if len(word[0]) > 1]
+    english = [token for token in englishTokens if token not in stopwordsEN]
+    # postprocessor = Postprocessor(twitter, passtags='Noun', ngrams=ngrams, stopwords=stopwordsKR)
+    # koreanWords = postprocessor.pos(text)
+    koreanWords = okt.nouns(text)
+    # print(koreanWords)
+    korean = [word for word in koreanWords if len(word) > 1]
     tokens = []
     tokens.extend(korean)
-    tokens.extend(englishTokens)
+    tokens.extend(english)
     return tokens
 
 def createCourseInfo(contents):
@@ -144,15 +149,19 @@ def getCourse(course):
     # course[1] 예시: 'https://www.inflearn.com/course/aws-starter#inquires'
     # driver = connectWebDriver(course[1])
     driver = connectWebDriver(course['url'])
-
-    titleElement = driver.find_element_by_xpath('//*[@id="main"]/div[1]/div/div/div[1]/div/div[2]/div[1]')
-    reviewCountElement = driver.find_element_by_xpath(
-        '/html/body/div[1]/main/div[1]/div/div/div[1]/div/div[2]/div[2]/div[1]/span[2]')
-    studentCountElement = driver.find_element_by_xpath(
-        '//*[@id="main"]/div[1]/div/div/div[1]/div/div[2]/div[2]/div[1]/span[3]')
-    summaryElement = driver.find_element_by_css_selector('#description > div.course_summary.description_sub')
-    canDoElements = driver.find_elements_by_css_selector('#description > div.can_do.description_sub > ul > li')
-
+    try:
+        titleElement = driver.find_element_by_xpath('//*[@id="main"]/div[1]/div/div/div[1]/div/div[2]/div[1]')
+        reviewCountElement = driver.find_element_by_xpath(
+            '/html/body/div[1]/main/div[1]/div/div/div[1]/div/div[2]/div[2]/div[1]/span[2]')
+        studentCountElement = driver.find_element_by_xpath(
+            '//*[@id="main"]/div[1]/div/div/div[1]/div/div[2]/div[2]/div[1]/span[3]')
+        summaryElement = driver.find_element_by_css_selector('#description > div.course_summary.description_sub')
+        canDoElements = driver.find_elements_by_css_selector('#description > div.can_do.description_sub > ul > li')
+    except:
+        with open('data/error.csv', 'a', newline='') as file:
+            fw = csv.writer(file, delimiter=',')
+            fw.writerow([course['url'], time.ctime()])
+            return
     # category = course[0]
     category = course['category']
     title = titleElement.text
@@ -167,8 +176,14 @@ def getCourse(course):
         canDoTokens.extend(tokenize(canDo))
 
     if hasxpath(driver, '//div[@class="review_list"]/button'):
-        driver.execute_script("arguments[0].scrollIntoView();", driver.find_element_by_xpath('//*[@id="reviews"]/div[2]/button'))
-        driver.find_element_by_xpath('//div[@class="review_list"]/button').send_keys(Keys.ENTER)
+        try:
+            driver.execute_script("arguments[0].scrollIntoView();", driver.find_element_by_xpath('//*[@id="reviews"]/div[2]/button'))
+            driver.find_element_by_xpath('//div[@class="review_list"]/button').send_keys(Keys.ENTER)
+        except:
+            with open('data/error.csv', 'a', newline='') as file:
+                fw = csv.writer(file, delimiter=',')
+                fw.writerow([course['url'], time.ctime()])
+                return
 
     reviewElements = driver.find_elements_by_css_selector('#reviews > div.review_list')
     reviews = [reviewElement.text for reviewElement in reviewElements] if reviewElements else []
@@ -198,7 +213,7 @@ def getCourse(course):
 
 def scrapCourse(courses):
 
-    with closing(Pool(processes=3)) as pool:
+    with closing(Pool(processes=4)) as pool:
         pool.map(getCourse, courses)
 
     print('카테고리별 강의명 저장 완료!')
@@ -207,11 +222,10 @@ def scrapCourse(courses):
 
 if __name__ == '__main__':
     manager = Manager()
-
-    coursePages = getCoursesPages()
-    courses = scrapCourses(coursePages)
+    # coursePages = getCoursesPages()
+    # courses = scrapCourses(coursePages)
     # print(courses)
-    # courses = readDB('courseUrl')
+    courses = readDB('courseUrl')
     # print(courses)
     # courses=[{'_id': '5f5508e88bb5431cb17a5c11', 'url': 'https://www.inflearn.com/course/ios#inquires', 'category': 'it-programming'}]
     scrapCourse(courses)
